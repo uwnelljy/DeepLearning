@@ -54,8 +54,10 @@ class RunModel:
             logging.debug('Epoch {} starts'.format(epoch))
             loss_all_train = 0
             for imgs, labels in train_batch:
-                outputs = self.model(imgs.cuda())
-                loss = self.loss_function(outputs, labels.cuda())
+                imgs = imgs.cuda()
+                labels = labels.cuda()
+                outputs = self.model(imgs)
+                loss = self.loss_function(outputs, labels)
 
                 # add regularization to loss
                 lambda_l2 = 0.001
@@ -75,7 +77,8 @@ class RunModel:
 
 
 if __name__ == '__main__':
-    model1 = ConConTanh(n_channels_1=16, n_channels_2=8, fc1_output_features=32, classes=10).cuda()
+    model1 = ConConTanh(n_channels_1=16, n_channels_2=8, fc1_output_features=32, classes=10)
+    model1 = model1.cuda()
     modelrun = RunModel(path=PATH, batchsize=BATCHSIZE, model=model1,
                         learningrate=LEARNINGRATE,
                         epoches=EPOCHES, loss_function=LOSS)
