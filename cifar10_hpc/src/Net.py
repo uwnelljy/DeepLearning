@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch as t
 import torch.nn.functional as F  # functions without state
 
 
@@ -26,18 +27,18 @@ class ConConTanh(nn.Module):
 
     def forward(self, input):
         out = self.Conv1(input)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = F.max_pool2d(out, 2)
 
         out = self.Conv2(out)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = F.max_pool2d(out, 2)
 
         # full connected layer
         # stretch to a straight tensor with n_channels_2*8*8 features
         out = out.view(-1, self.n_channels_2*8*8)
         out = self.fc1(out)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = self.fc2(out)
 
         return out
@@ -69,12 +70,12 @@ class NetDropOut(nn.Module):
 
     def forward(self, input):
         out = self.Conv1(input)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = F.max_pool2d(out, 2)
         out = self.dropout1(out)
 
         out = self.Conv2(out)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = F.max_pool2d(out, 2)
         out = self.dropout2(out)
 
@@ -82,7 +83,7 @@ class NetDropOut(nn.Module):
         # stretch to a straight tensor with n_channels_2*8*8 features
         out = out.view(-1, self.n_channels_2*8*8)
         out = self.fc1(out)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = self.fc2(out)
 
         return out
@@ -116,17 +117,17 @@ class NetBatch(nn.Module):
     def forward(self, input):
         out = self.Conv1(input)
         out = self.batchnorm1(out)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = F.max_pool2d(out, 2)
 
         out = self.Conv2(out)
         out = self.batchnorm2(out)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = F.max_pool2d(out, 2)
 
         out = out.view(-1, self.n_channels_2*8*8)
         out = self.fc1(out)
-        out = F.tanh(out)
+        out = t.tanh(out)
         out = self.fc2(out)
 
         return out
@@ -156,22 +157,22 @@ class NetDepth(nn.Module):
 
     def forward(self, input):
         out = self.Convd1(input)
-        out = F.relu(out)
+        out = t.relu(out)
         out = F.max_pool2d(out, 2)
 
         out = self.Convd2(out)
-        out = F.relu(out)
+        out = t.relu(out)
         out = F.max_pool2d(out, 2)
 
         out1 = out
 
         out = self.Convd3(out)
-        out = F.relu(out)
+        out = t.relu(out)
         out = F.max_pool2d(out + out1, 2)
 
         out = out.view(-1, self.n_channels_2*4*4)
         out = self.fc1(out)
-        out = F.relu(out)
+        out = t.relu(out)
         out = self.fc2(out)
 
         return out
