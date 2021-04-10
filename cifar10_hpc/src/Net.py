@@ -13,20 +13,20 @@ class ConConTanh(nn.Module):
         self.classes = classes
 
         # first convolution layer: 3*32*32 -> n_channels_1*32*32
-        self.Conv1 = nn.Conv2d(in_channels=3, out_channels=self.n_channels_1,
+        self.Conv1 = nn.Conv2d(in_channels=3, out_channels=n_channels_1,
                                kernel_size=3, padding=1)  # 3 means 3*3 kernel
         # second convolution layer: n_channels_1*16*16 -> n_channels_2*16*16
-        self.Conv2 = nn.Conv2d(in_channels=self.n_channels_1, out_channels=self.n_channels_2,
+        self.Conv2 = nn.Conv2d(in_channels=n_channels_1, out_channels=n_channels_2,
                                kernel_size=3, padding=1)
         # first full connected layer: n_channels_2*8*8 -> fc1_output_features
-        self.fc1 = nn.Linear(in_features=self.n_channels_2*8*8,
-                             out_features=self.fc1_output_features)
+        self.fc1 = nn.Linear(in_features=n_channels_2*8*8,
+                             out_features=fc1_output_features)
         # second full connected layer: fc1_output_features -> number of classes
-        self.fc2 = nn.Linear(in_features=self.fc1_output_features,
-                             out_features=self.classes)
+        self.fc2 = nn.Linear(in_features=fc1_output_features,
+                             out_features=classes)
 
-    def forward(self, input):
-        out = self.Conv1(input)
+    def forward(self, x):
+        out = self.Conv1(x)
         out = t.tanh(out)
         out = F.max_pool2d(out, 2)
 
@@ -54,22 +54,22 @@ class NetDropOut(nn.Module):
         self.fc1_output_features = fc1_output_features
         self.classes = classes
 
-        self.Conv1 = nn.Conv2d(in_channels=3, out_channels=self.n_channels_1,
+        self.Conv1 = nn.Conv2d(in_channels=3, out_channels=n_channels_1,
                                kernel_size=3, padding=1)
         self.dropout1 = nn.Dropout2d(p=0.4)
 
-        self.Conv2 = nn.Conv2d(in_channels=self.n_channels_1, out_channels=self.n_channels_2,
+        self.Conv2 = nn.Conv2d(in_channels=n_channels_1, out_channels=n_channels_2,
                                kernel_size=3, padding=1)
         self.dropout2 = nn.Dropout2d(p=0.4)
 
-        self.fc1 = nn.Linear(in_features=self.n_channels_2*8*8,
-                             out_features=self.fc1_output_features)
+        self.fc1 = nn.Linear(in_features=n_channels_2*8*8,
+                             out_features=fc1_output_features)
 
-        self.fc2 = nn.Linear(in_features=self.fc1_output_features,
-                             out_features=self.classes)
+        self.fc2 = nn.Linear(in_features=fc1_output_features,
+                             out_features=classes)
 
-    def forward(self, input):
-        out = self.Conv1(input)
+    def forward(self, x):
+        out = self.Conv1(x)
         out = t.tanh(out)
         out = F.max_pool2d(out, 2)
         out = self.dropout1(out)
@@ -99,23 +99,23 @@ class NetBatch(nn.Module):
         self.fc1_output_features = fc1_output_features
         self.classes = classes
 
-        self.Conv1 = nn.Conv2d(in_channels=3, out_channels=self.n_channels_1,
+        self.Conv1 = nn.Conv2d(in_channels=3, out_channels=n_channels_1,
                                kernel_size=3, padding=1)
         # normalization within each batch
         self.batchnorm1 = nn.BatchNorm2d(num_features=n_channels_1)
 
-        self.Conv2 = nn.Conv2d(in_channels=self.n_channels_1, out_channels=self.n_channels_2,
+        self.Conv2 = nn.Conv2d(in_channels=n_channels_1, out_channels=n_channels_2,
                                kernel_size=3, padding=1)
         self.batchnorm2 = nn.BatchNorm2d(num_features=n_channels_2)
 
-        self.fc1 = nn.Linear(in_features=self.n_channels_2 * 8 * 8,
-                             out_features=self.fc1_output_features)
+        self.fc1 = nn.Linear(in_features=n_channels_2 * 8 * 8,
+                             out_features=fc1_output_features)
 
-        self.fc2 = nn.Linear(in_features=self.fc1_output_features,
-                             out_features=self.classes)
+        self.fc2 = nn.Linear(in_features=fc1_output_features,
+                             out_features=classes)
 
-    def forward(self, input):
-        out = self.Conv1(input)
+    def forward(self, x):
+        out = self.Conv1(x)
         out = self.batchnorm1(out)
         out = t.tanh(out)
         out = F.max_pool2d(out, 2)
@@ -142,21 +142,21 @@ class NetDepth(nn.Module):
         self.fc1_output_features = fc1_output_features
         self.classes = classes
 
-        self.Convd1 = nn.Conv2d(in_channels=3, out_channels=self.n_channels_1,
+        self.Convd1 = nn.Conv2d(in_channels=3, out_channels=n_channels_1,
                                 kernel_size=3, padding=1)
-        self.Convd2 = nn.Conv2d(in_channels=self.n_channels_1, out_channels=self.n_channels_2,
+        self.Convd2 = nn.Conv2d(in_channels=n_channels_1, out_channels=n_channels_2,
                                 kernel_size=3, padding=1)
-        self.Convd3 = nn.Conv2d(in_channels=self.n_channels_2, out_channels=self.n_channels_2,
+        self.Convd3 = nn.Conv2d(in_channels=n_channels_2, out_channels=n_channels_2,
                                 kernel_size=3, padding=1)
 
-        self.fc1 = nn.Linear(in_features=self.n_channels_2 * 4 * 4,
-                             out_features=self.fc1_output_features)
+        self.fc1 = nn.Linear(in_features=n_channels_2 * 4 * 4,
+                             out_features=fc1_output_features)
 
-        self.fc2 = nn.Linear(in_features=self.fc1_output_features,
-                             out_features=self.classes)
+        self.fc2 = nn.Linear(in_features=fc1_output_features,
+                             out_features=classes)
 
-    def forward(self, input):
-        out = self.Convd1(input)
+    def forward(self, x):
+        out = self.Convd1(x)
         out = t.relu(out)
         out = F.max_pool2d(out, 2)
 
