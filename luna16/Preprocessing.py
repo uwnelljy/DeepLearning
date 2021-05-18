@@ -1,7 +1,7 @@
 import csv
 import glob
 import os
-import math
+from Helper import Helper
 from collections import namedtuple
 from functools import lru_cache
 import SimpleITK as sitk
@@ -14,7 +14,6 @@ class Candidate:
 
     @lru_cache(1)
     def GetCandidateInfo(self):
-
         # get the series uid of files present on the disk
         mhd_full_file_name = glob.glob('./data/subset*/*.mhd')
         # the full directory name
@@ -57,7 +56,7 @@ class Candidate:
                 #               if a is not in dic, then return b
                 for annotationDiameterXYZ in annotationDiameterXYZ_set.get(series_uid, []):
                     annotationXYZ, annotationDiameter = annotationDiameterXYZ
-                    distance = Candidate.euclidean_distance(annotationXYZ, candidateXYZ)
+                    distance = Helper.euclidean_distance(annotationXYZ, candidateXYZ)
                     # if the two center is really close, they should be the same one
                     if distance <= annotationDiameter / 2:
                         candidateDiameter = annotationDiameter
@@ -71,9 +70,6 @@ class Candidate:
             candidateInfo_list.sort(reverse=True)
         return candidateInfo_list
 
-    @staticmethod
-    def euclidean_distance(x, y):
-        return math.sqrt(sum([(i-j)**2 for i, j in zip(x, y)]))
 
 
 class CtLoader:
@@ -96,10 +92,18 @@ class CtLoader:
     def get_raw_chunk(ircTuple, width, ct_np):
         slice_list = [] # the slice targets at the corresponding axis
         for axis, center in enumerate(ircTuple):
-            start = int(np.round(center-width[axis]/2))
+            start = int(round(center-width[axis]/2))
             end = int(start + width[axis])
+            # special cases
+            if start < 0:
+                start = 0
+                end = int(width[axis])
+            if end > ct_np.shape[axis]:
+                end = ct_np.shape[axis]
+                start = int(end-width[axis])
             slice_list.append(slice(start, end))
         ct_chunk = ct_np[tuple(slice_list)]
+        print(ct_np.shape, slice_list, ct_chunk.shape)
         return ct_chunk
 
     @staticmethod
@@ -114,10 +118,10 @@ class CtLoader:
         # [2, 2, 2],
         # [3, 4, 6]]
         # then the value of np.linalg.inv(direction) / spacing is:
-        # [[1/1, 2/2, 3/3],     spacing: [1, 2, 3]
+        # [[1/1, 2/2, 3/3],
         # [2/1, 2/2, 2/3],
         # [3/1, 4/2, 6/3]]
-        irc = (xyz - origin) @ np.linalg.inv(direction) / spacing
+        irc = ((xyz - origin) @ np.linalg.inv(direction)) / spacing
         irc = np.round(irc)
         # change type to int
-        return ircTuple(int(irc[0]), int(irc[1]), int(irc[2]))
+        return ircTuple(int(irc[2]), int(irc[1]), int(irc[0]))
