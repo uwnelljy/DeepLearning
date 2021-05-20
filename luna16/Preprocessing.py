@@ -71,7 +71,6 @@ class Candidate:
         return candidateInfo_list
 
 
-
 class CtLoader:
     def __init__(self, series_uid):
         self.series_uid = series_uid
@@ -94,16 +93,17 @@ class CtLoader:
         for axis, center in enumerate(ircTuple):
             start = int(round(center-width[axis]/2))
             end = int(start + width[axis])
-            # special cases
+
+            # special cases: if it reaches the boundary of the image
             if start < 0:
                 start = 0
                 end = int(width[axis])
             if end > ct_np.shape[axis]:
                 end = ct_np.shape[axis]
                 start = int(end-width[axis])
+
             slice_list.append(slice(start, end))
         ct_chunk = ct_np[tuple(slice_list)]
-        print(ct_np.shape, slice_list, ct_chunk.shape)
         return ct_chunk
 
     @staticmethod
@@ -124,4 +124,5 @@ class CtLoader:
         irc = ((xyz - origin) @ np.linalg.inv(direction)) / spacing
         irc = np.round(irc)
         # change type to int
+        # z corresponds to index
         return ircTuple(int(irc[2]), int(irc[1]), int(irc[0]))

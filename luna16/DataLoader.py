@@ -41,7 +41,6 @@ class LunaDataset(Dataset):
         ct_chunk_t = t.from_numpy(ct_chunk).to(t.float32)
         # add one additional dimension 'channel' because ct image only has one channel
         ct_chunk_t = ct_chunk_t.unsqueeze(0)
-
         # convert label to tensor with one hot-encoding
         label_t = t.tensor([not candidateTuple.isNodule_bool, candidateTuple.isNodule_bool], dtype=t.long)
         return ct_chunk_t, label_t, series_uid, xyz

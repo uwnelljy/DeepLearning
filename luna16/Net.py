@@ -29,7 +29,10 @@ class LunaModel(nn.Module):
         self.block2 = LunaBlock(conv_channels, conv_channels * 2)
         self.block3 = LunaBlock(conv_channels * 2, conv_channels * 4)
         self.block4 = LunaBlock(conv_channels * 4, conv_channels * 8)
+        # the dimension after 4 conv and maxpool: 32*48*48 -> 2*3*3
+        # so the number of features is 8*8*2*3*3 = 1152
         self.head_linear = nn.Linear(in_features=1152, out_features=2)
+        # softmax returns the probability of two classes [p1, p2]
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, input_batch):
