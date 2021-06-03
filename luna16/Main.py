@@ -2,6 +2,7 @@ import sys
 from Net import LunaModel
 import torch as t
 import torch.nn as nn
+import numpy as np
 import logging
 import torch.optim as optim
 from DataLoader import LunaDataset
@@ -53,7 +54,12 @@ class LunaTrainingApp:
         return model
 
     def initoptimizer(self):
-        return optim.SGD(self.model.parameters(), lr=0.001)
+        # About momentum:
+        # gradient descent: w_{k+1} = w_k - alpha*f'(w_k)
+        # with momentum: z_{k+1} = beta*z_k + f'(w_k),
+        #                w_{k+1} = w_k - alpha*z_{k+1}
+        # control the updating. High momentum, smooth gradient descent.
+        return optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
 
     def initTrainloader(self):
         # get training dataset
@@ -64,6 +70,9 @@ class LunaTrainingApp:
             batch_size *= t.cuda.device_count()  # why????????
 
         # pinned memory transfers to GPU quickly
+        # num_workers: provide parallel loading of data by using separate processes and shared memory
+        # each worker process produces complete batches
+        # this helps make sure hungry GPUs are well fed with data
         # num_workers: worker将它负责的batch加载进RAM，dataloader就可以直接从RAM中找本轮迭代要用的batch。
         # 如果num_worker设置得大，好处是寻batch速度快，因为下一轮迭代的batch很可能在上一轮/上上一轮...迭代时已经加载好了。
         # 坏处是内存开销大，也加重了CPU负担（worker加载数据到RAM的进程是进行CPU复制）。
@@ -147,6 +156,51 @@ class LunaTrainingApp:
                 loss = self.computeBatchLoss(ndx, oneloader, validationloader.batch_size, valMetrics_gpu)
         return valMetrics_gpu.to('cpu')
 
+    def logMetrics(self, epoch, mode, metrics, threshold=0.5):
+        """
+        :param epoch: current epoch
+        :param mode: 'training' or 'validation'
+        :param metrics: TrainMetrics or ValMetrics. 0 for true labels, 1 for probability result, 2 for loss
+        :param threshold: classification threshold, default is 0.5, because we only have probability in metrics
+        :return:
+        """
+        # create mask
+        pos_label_mask = metrics[0] >= threshold
+        pos_pre_mask = metrics[1] >= threshold
+        neg_label_mask = ~pos_label_mask
+        neg_pre_mask = ~pos_pre_mask
+
+        # compute count
+        pos_count = int(pos_label_mask.sum())
+        neg_count = int(neg_label_mask.sum())
+
+        # compute correct classifications
+        pos_correct = int((pos_label_mask & pos_pre_mask).sum())
+        neg_correct = int((neg_label_mask & neg_pre_mask).sum())
+
+        # store them into dictionary
+        metrics_dict = {'loss.all': metrics[2].mean(),
+                        'loss.pos': metrics[2, pos_label_mask].mean(),
+                        'loss.neg': metrics[2, neg_label_mask].mean(),
+                        'correct.all': (pos_correct + neg_correct) / np.float32(metrics.shape[1]) * 100,
+                        'correct.pos': pos_correct / np.float32(pos_count) * 100,
+                        'correct.neg': neg_correct / np.float32(neg_count) * 100}
+
+        # log out
+        # loss is with a decimal part of length 4
+        logging.info(('Epoch {}, {}, {loss.all:.4f} loss, ' +
+                     '{correct.all:-5.1f}% correct in total, ').format(epoch, mode, **metrics_dict))
+        logging.info(('{loss.pos:.4f} positive loss, ' +
+                      '{correct.pos:-5.1f}% positive correct, ' +
+                      '({pos_correct:} of {pos_count:}).').format(pos_correct=pos_correct,
+                                                                  pos_count=pos_count,
+                                                                  **metrics_dict))
+        logging.info(('{loss.neg:.4f} negative loss, ' +
+                      '{correct.neg:-5.1f}% negative correct, ' +
+                      '({neg_correct:} of {neg_count:}).').format(neg_correct=neg_correct,
+                                                                  neg_count=neg_count,
+                                                                  **metrics_dict))
+
     def main(self):
         # start
         logging.info('Starting {}, {}'.format(type(self).__name__, self.args))
@@ -166,10 +220,12 @@ class LunaTrainingApp:
                 (t.cuda.device_count() if self.use_cuda else 1)))
 
             TrainMetrics = self.training(trainloader)
+            self.logMetrics(epoch, 'Training', TrainMetrics)
             logging.info('Epoch {}, training ends'.format(epoch))
             ValMetrics = self.validation(validationloader)
+            self.logMetrics(epoch, 'Validation', ValMetrics)
             logging.info('Epoch{}, validation ends'.format(epoch))
 
 
 if __name__ == '__main__':
-    print(LunaTrainingApp().main())
+    LunaTrainingApp().main()
