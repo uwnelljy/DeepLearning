@@ -9,6 +9,9 @@ from DataLoader import LunaDataset
 from torch.utils.data import DataLoader
 import argparse
 
+TEST = '1.3.6.1.4.1.14519.5.2.1.6279.6001.109002525524522225658609808059'
+STRIDE = 10
+
 logging.basicConfig(filename='luna.log',
                     format='[%(asctime)s-%(filename)s-%(levelname)s:%(message)s]',
                     filemode='a',  # a means write after the former text, w means overwrite on the former text
@@ -34,6 +37,10 @@ class LunaTrainingApp:
         parser.add_argument('--epochs',
                             help='Maximun iterations for training the model',
                             default=1, type=int)
+        parser.add_argument('--balanced',
+                            help='Create balanced data with half positive cases and half negative cases',
+                            action='store_true',  # if we use --balanced, then it will be True, ow it will be False
+                            default=False)
 
         # we use argument variables from command line
         self.args = parser.parse_args(sys_argv)
@@ -63,7 +70,14 @@ class LunaTrainingApp:
 
     def initTrainloader(self):
         # get training dataset
-        training_dataset = LunaDataset(stride=10, isVal_bool=False)
+        training_dataset = LunaDataset(stride=STRIDE,
+                                       isVal_bool=False,
+                                       ratio=int(self.args.balanced))  # int(True) = 1, int(False) = 0
+        logging.info('Balanced: {}, ratio: {}, {} positive samples, {} negative samples'.format(
+            self.args.balanced,
+            training_dataset.ratio,
+            len(training_dataset.positive_list),
+            len(training_dataset.negative_list)))
         # read batch_size from command line
         batch_size = self.args.batch_size
         if self.use_cuda:
@@ -85,7 +99,7 @@ class LunaTrainingApp:
         return trainloader
 
     def initValidationloader(self):
-        validation_dataset = LunaDataset(stride=10, isVal_bool=True)
+        validation_dataset = LunaDataset(stride=STRIDE, isVal_bool=True)
         batch_size = self.args.batch_size
         if self.use_cuda:
             batch_size *= t.cuda.device_count()
@@ -96,12 +110,13 @@ class LunaTrainingApp:
     def training(self, trainloader):
         # set model to training mode, but the model is still self.model
         self.model.train()
+        trainloader.dataset.shuffleSamples()  # shuffle positive and negative lists
 
         # create a matrix to store prediction result
         # 0 for true labels, 1 for probability result, 2 for loss
         trainMetrics_gpu = t.zeros(3, len(trainloader.dataset), device=self.device)
         for ndx, oneloader in enumerate(trainloader):
-            logging.info('Starting the {}th batch in training loader'.format(ndx))
+            # logging.info('Starting the {}th batch in training loader'.format(ndx))
             # update coefficients
             self.optimizer.zero_grad()
             loss = self.computeBatchLoss(ndx, oneloader, trainloader.batch_size, trainMetrics_gpu)
@@ -152,7 +167,7 @@ class LunaTrainingApp:
             # zero tensor to store result
             valMetrics_gpu = t.zeros(3, len(validationloader.dataset), device=self.device)
             for ndx, oneloader in enumerate(validationloader):
-                logging.info('Starting the {}th batch in validation loader'.format(ndx))
+                # logging.info('Starting the {}th batch in validation loader'.format(ndx))
                 loss = self.computeBatchLoss(ndx, oneloader, validationloader.batch_size, valMetrics_gpu)
         return valMetrics_gpu.to('cpu')
 
@@ -178,28 +193,53 @@ class LunaTrainingApp:
         pos_correct = int((pos_label_mask & pos_pre_mask).sum())
         neg_correct = int((neg_label_mask & neg_pre_mask).sum())
 
+        # compute precision, recall and F1 score
+        true_positive = pos_correct
+        true_negative = neg_correct
+        false_positive = int((neg_label_mask & pos_pre_mask).sum())
+        false_negative = int((pos_label_mask & neg_pre_mask).sum())
+
+        if np.float32(true_positive + false_positive) == 0:
+            precision = -999
+        else:
+            precision = true_positive / np.float32(true_positive + false_positive)
+        if np.float32(true_positive + false_negative) == 0:
+            recall = -999
+        else:
+            recall = true_positive / np.float32(true_positive + false_negative)
+        if precision == -999 or recall == -999 or (precision + recall == 0):
+            f1 = -999
+        else:
+            f1 = 2 * (precision * recall) / (precision + recall)
+
         # store them into dictionary
-        metrics_dict = {'loss.all': metrics[2].mean(),
-                        'loss.pos': metrics[2, pos_label_mask].mean(),
-                        'loss.neg': metrics[2, neg_label_mask].mean(),
-                        'correct.all': (pos_correct + neg_correct) / np.float32(metrics.shape[1]) * 100,
-                        'correct.pos': pos_correct / np.float32(pos_count) * 100,
-                        'correct.neg': neg_correct / np.float32(neg_count) * 100}
+        metrics_dict = {'loss_all': metrics[2].mean(),
+                        'loss_pos': metrics[2, pos_label_mask].mean(),
+                        'loss_neg': metrics[2, neg_label_mask].mean(),
+                        'correct_all': (pos_correct + neg_correct) / np.float32(metrics.shape[1]) * 100,
+                        'correct_pos': pos_correct / np.float32(pos_count) * 100,
+                        'correct_neg': neg_correct / np.float32(neg_count) * 100,
+                        'precision': precision,
+                        'recall': recall,
+                        'f1': f1}
 
         # log out
         # loss is with a decimal part of length 4
-        logging.info(('Epoch {}, {}, {loss.all:.4f} loss, ' +
-                     '{correct.all:-5.1f}% correct in total, ').format(epoch, mode, **metrics_dict))
-        logging.info(('{loss.pos:.4f} positive loss, ' +
-                      '{correct.pos:-5.1f}% positive correct, ' +
+        logging.info(('Epoch {}, {}, {loss_all:.4f} loss, ' +
+                     '{correct_all:-5.1f}% correct in total, ').format(epoch, mode, **metrics_dict))
+        logging.info(('{loss_pos:.4f} positive loss, ' +
+                      '{correct_pos:-5.1f}% positive correct, ' +
                       '({pos_correct:} of {pos_count:}).').format(pos_correct=pos_correct,
                                                                   pos_count=pos_count,
                                                                   **metrics_dict))
-        logging.info(('{loss.neg:.4f} negative loss, ' +
-                      '{correct.neg:-5.1f}% negative correct, ' +
+        logging.info(('{loss_neg:.4f} negative loss, ' +
+                      '{correct_neg:-5.1f}% negative correct, ' +
                       '({neg_correct:} of {neg_count:}).').format(neg_correct=neg_correct,
                                                                   neg_count=neg_count,
                                                                   **metrics_dict))
+        logging.info(('Precision is {precision:.4f}, ' +
+                      'Recall is {recall:.4f}, ' +
+                      'F1 score is {f1:.4f}').format(**metrics_dict))
 
     def main(self):
         # start

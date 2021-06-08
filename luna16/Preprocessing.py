@@ -76,6 +76,7 @@ class CtLoader:
         self.series_uid = series_uid
         self.ct_mhd, self.ct_np = self.get_raw_Ct()
 
+    @lru_cache(1, typed=True)
     def get_raw_Ct(self):
         mhd_path = glob.glob('./data/subset*/{}.mhd'.format(self.series_uid))[0]
         ct_mhd = sitk.ReadImage(mhd_path)  # this function addresses .raw file at the same time
