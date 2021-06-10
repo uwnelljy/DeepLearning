@@ -6,6 +6,10 @@ from collections import namedtuple
 from functools import lru_cache
 import SimpleITK as sitk
 import numpy as np
+import torch as t
+import random
+import math
+from torch.nn import functional
 
 
 class Candidate:
@@ -88,8 +92,7 @@ class CtLoader:
         ct_np.clip(min=-1000, max=1000, out=ct_np)
         return ct_mhd, ct_np
 
-    @staticmethod
-    def get_raw_chunk(ircTuple, width, ct_np):
+    def get_raw_chunk(self, ircTuple, width):
         slice_list = [] # the slice targets at the corresponding axis
         for axis, center in enumerate(ircTuple):
             start = int(round(center-width[axis]/2))
@@ -99,31 +102,94 @@ class CtLoader:
             if start < 0:
                 start = 0
                 end = int(width[axis])
-            if end > ct_np.shape[axis]:
-                end = ct_np.shape[axis]
+            if end > self.ct_np.shape[axis]:
+                end = self.ct_np.shape[axis]
                 start = int(end-width[axis])
 
             slice_list.append(slice(start, end))
-        ct_chunk = ct_np[tuple(slice_list)]
+        ct_chunk = self.ct_np[tuple(slice_list)]
         return ct_chunk
 
-    @staticmethod
-    def xyz2irc(xyzTuple, origin, spacing, direction):
-        ircTuple = namedtuple('ircTuple', 'index, row, col')
-        xyz = np.array(xyzTuple)  # change all the variables to np.array
-        origin = np.array(origin)
-        spacing = np.array(spacing)
-        direction = np.array(direction).reshape(3, 3)
-        # np.linalg.inv(direction) / spacing:
-        # [[1, 2, 3],     spacing: [1, 2, 3]
-        # [2, 2, 2],
-        # [3, 4, 6]]
-        # then the value of np.linalg.inv(direction) / spacing is:
-        # [[1/1, 2/2, 3/3],
-        # [2/1, 2/2, 2/3],
-        # [3/1, 4/2, 6/3]]
-        irc = ((xyz - origin) @ np.linalg.inv(direction)) / spacing
-        irc = np.round(irc)
-        # change type to int
-        # z corresponds to index
-        return ircTuple(int(irc[2]), int(irc[1]), int(irc[0]))
+    def getChunkCandidate(self, xyz, width):
+        origin = self.ct_mhd.GetOrigin()
+        spacing = self.ct_mhd.GetSpacing()
+        direction = self.ct_mhd.GetDirection()
+        # get center index of nodules
+        irc = Helper.xyz2irc(xyz, origin, spacing, direction)
+        # get ct chunk
+        ct_chunk = self.get_raw_chunk(irc, width)
+        # convert to tensor
+        ct_chunk_t = t.from_numpy(ct_chunk).to(t.float32)
+        # add one additional dimension 'channel' because ct image only has one channel
+        # now C D H W
+        ct_chunk_t = ct_chunk_t.unsqueeze(0)
+        return ct_chunk_t, irc
+
+    def getAugmentedCandidate(self, augmentation, xyz, width):
+        """
+        :param augmentation: is a dictionary containing translation information
+                             'flip': mirror, bool
+                             'offset': the maximum offset expressed in the same scale as the [-1, 1] range, float
+                             'scale': scale, float
+                             'rotate': rotate image, bool
+                             'noise': add noise, float
+        :param xyz: center
+        :param width: width of subsetting
+        :return:
+        """
+        # get chunk before augmentation
+        ct_chunk_t, irc = self.getChunkCandidate(xyz, width)
+        # add one dimension: batch size, now is N C D H W
+        ct_chunk_t_whole_dimension = ct_chunk_t.unsqueeze(0).to(dtype=t.float32)
+
+        # define translation matrix
+        # which should be:
+        # [[1, 0, 0, a]
+        #   0, 1, 0, b]
+        #   0, 0, 1, c]]
+        # the diagonal matrix controls the scale, while abc controls offset.
+        theta = t.eye(4)  # generate a 4*4 standard diagonal matrix, we would use the first 3 rows
+
+        # modify translation matrix
+        for i in range(3):
+            if 'flip' in augmentation:
+                if random.random() > 0.5:  # uniform distribution [0, 1]
+                    theta[i, i] *= -1
+
+            if 'offset' in augmentation:
+                offset = augmentation['offset']  # offset is a list: [a, b, c]
+                random_effects = random.random() * 2 - 1  # we don't want a large offset to destruct the sample
+                theta[i, 3] = offset * random_effects
+
+            if 'scale' in augmentation:
+                scale = augmentation['scale']
+                random_effects = random.random() * 2 - 1
+                theta[i, i] *= 1 + scale * random_effects
+
+            if 'rotate' in augmentation:
+                angle = random.random() * math.pi * 2  # we don't specify the angle
+                cos = math.cos(angle)
+                sin = math.sin(angle)
+                # we only rotate dimension H and W and keep the D the same because it has a different value
+                rotation = t.tensor([
+                    [cos, -sin, 0, 0],
+                    [sin, cos, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1]
+                ])
+                theta @= rotation
+
+        # create grid
+        grid = functional.affine_grid(theta[:3].unsqueeze(0).to(dtype=t.float32),
+                                      ct_chunk_t_whole_dimension.size())
+        # padding_mode='border':对于越界的位置在网格中采用边界的pixel value进行填充。
+        augmented_chunk = functional.grid_sample(ct_chunk_t_whole_dimension,
+                                                 grid, padding_mode='border')[0]
+
+        # add noise
+        if 'noise' in augmentation:
+            noise = t.rand_like(augmented_chunk)  # generate random values having the same dimension as augmented_chunk
+            noise *= augmentation['noise']
+            augmented_chunk += noise
+
+        return augmented_chunk, irc

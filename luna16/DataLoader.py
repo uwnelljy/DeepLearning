@@ -5,7 +5,8 @@ import random
 
 
 class LunaDataset(Dataset):
-    def __init__(self, stride=0, isVal_bool=None, series_uid=None, ratio=0):
+    def __init__(self, stride=0, isVal_bool=None, series_uid=None,
+                 ratio=0, augmentation=None):
         """
         :param stride: the proportion of training set and validation set
         :param isVal_bool: bool to identify training or validation set
@@ -28,6 +29,7 @@ class LunaDataset(Dataset):
             assert self.CandidateInfo_list
 
         self.ratio = ratio
+        self.augmentation = augmentation
         # get positive and negative cases
         self.positive_list = [item for item in self.CandidateInfo_list if item.isNodule_bool]
         self.negative_list = [item for item in self.CandidateInfo_list if not item.isNodule_bool]
@@ -42,7 +44,7 @@ class LunaDataset(Dataset):
         # speed the iteration in each epoch
         # because we have many repeated image (positive ones) after creating balanced data
         if self.ratio:
-            return 200000
+            return 100
         else:
             return len(self.CandidateInfo_list)
 
@@ -62,22 +64,17 @@ class LunaDataset(Dataset):
 
         # get needed information
         series_uid = candidateTuple.series_uid
-        ct_raw = Preprocessing.CtLoader(series_uid)
-        origin = ct_raw.ct_mhd.GetOrigin()
-        spacing = ct_raw.ct_mhd.GetSpacing()
-        direction = ct_raw.ct_mhd.GetDirection()
         # get center coordinates
         xyz = candidateTuple.candidateXYZ
-        # get center index of nodules
-        irc = ct_raw.xyz2irc(xyz, origin, spacing, direction)
         width = [32, 48, 48]
-        # get ct chunk
-        ct_chunk = ct_raw.get_raw_chunk(irc, width, ct_raw.ct_np)
-        # convert to tensor
-        ct_chunk_t = t.from_numpy(ct_chunk).to(t.float32)
-        # add one additional dimension 'channel' because ct image only has one channel
-        # now C D H W
-        ct_chunk_t = ct_chunk_t.unsqueeze(0)
+        raw_ct = Preprocessing.CtLoader(series_uid)
+
+        # get ct chunk with 1 channel
+        if self.augmentation:
+            ct_chunk_t, irc = raw_ct.getAugmentedCandidate(self.augmentation, xyz, width)
+        else:
+            ct_chunk_t, irc = raw_ct.getChunkCandidate(xyz, width)
+
         # convert label to tensor with one hot-encoding
         label_t = t.tensor([not candidateTuple.isNodule_bool, candidateTuple.isNodule_bool], dtype=t.long)
-        return ct_chunk_t, label_t, series_uid, xyz
+        return ct_chunk_t, label_t, series_uid, t.tensor(irc)

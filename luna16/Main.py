@@ -8,8 +8,8 @@ import torch.optim as optim
 from DataLoader import LunaDataset
 from torch.utils.data import DataLoader
 import argparse
+import warnings
 
-TEST = '1.3.6.1.4.1.14519.5.2.1.6279.6001.109002525524522225658609808059'
 STRIDE = 10
 
 logging.basicConfig(filename='luna.log',
@@ -17,6 +17,7 @@ logging.basicConfig(filename='luna.log',
                     filemode='a',  # a means write after the former text, w means overwrite on the former text
                     level=logging.DEBUG,  # logging all the information higher than debug (info, warning etc.)
                     datefmt='%Y/%m/%d %H:%M:%S')  # the format of time stamp for logging
+warnings.filterwarnings('ignore', category=UserWarning, module='torch.nn.functional')
 
 
 class LunaTrainingApp:
@@ -41,9 +42,44 @@ class LunaTrainingApp:
                             help='Create balanced data with half positive cases and half negative cases',
                             action='store_true',  # if we use --balanced, then it will be True, ow it will be False
                             default=False)
+        parser.add_argument('--augmentation',
+                            help='Creare augmented data using flip, rotate, offset, scale and noise',
+                            action='store_true',
+                            default=False)
+        parser.add_argument('--augmentation-flip',
+                            help='Randomly flip the data',
+                            action='store_true',
+                            default=False)
+        parser.add_argument('--augmentation-offset',
+                            help='Randomly add offset to each dimension',
+                            action='store_true',
+                            default=False)
+        parser.add_argument('--augmentation-scale',
+                            help='Randomly scale the data in each dimension',
+                            action='store_true',
+                            default=False)
+        parser.add_argument('--augmentation-rotate',
+                            help='Randomly rotate the data in each dimension',
+                            action='store_true',
+                            default=False)
+        parser.add_argument('--augmentation-noise',
+                            help='Randomly add noise to raw data',
+                            action='store_true',
+                            default=False)
 
         # we use argument variables from command line
         self.args = parser.parse_args(sys_argv)
+        self.augmentation = {}
+        if self.args.augmentation or self.args.augmentation_flip:
+            self.augmentation['flip'] = True
+        if self.args.augmentation or self.args.augmentation_offset:
+            self.augmentation['offset'] = 0.1
+        if self.args.augmentation or self.args.augmentation_scale:
+            self.augmentation['scale'] = 0.2
+        if self.args.augmentation or self.args.augmentation_rotate:
+            self.augmentation['rotate'] = True
+        if self.args.augmentation or self.args.augmentation_noise:
+            self.augmentation['noise'] = 25.0
 
         self.use_cuda = t.cuda.is_available()
         self.device = t.device('cuda') if self.use_cuda else t.device('cpu')
@@ -72,7 +108,8 @@ class LunaTrainingApp:
         # get training dataset
         training_dataset = LunaDataset(stride=STRIDE,
                                        isVal_bool=False,
-                                       ratio=int(self.args.balanced))  # int(True) = 1, int(False) = 0
+                                       ratio=int(self.args.balanced),
+                                       augmentation=self.augmentation)  # int(True) = 1, int(False) = 0
         logging.info('Balanced: {}, ratio: {}, {} positive samples, {} negative samples'.format(
             self.args.balanced,
             training_dataset.ratio,
