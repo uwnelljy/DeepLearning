@@ -1,4 +1,6 @@
 import sys
+import time
+
 from Net import LunaModel
 import torch as t
 import torch.nn as nn
@@ -81,28 +83,40 @@ class LunaTrainingApp:
         if self.args.augmentation or self.args.augmentation_noise:
             self.augmentation['noise'] = 25.0
 
+        self.checkpoint = None
+        self.loss = 10000000
+        self.epoch_start = 1
         self.use_cuda = t.cuda.is_available()
         self.device = t.device('cuda') if self.use_cuda else t.device('cpu')
-        self.model = self.initmodel()
-        self.optimizer = self.initoptimizer()
+        self.model, self.optimizer = self.initmodel_optimizer()
         self.totalTrainingSamples_count = 0
 
-    def initmodel(self):
+    def initmodel_optimizer(self):
+        # initialize model and optimizer
         model = LunaModel()
-        if self.use_cuda:
-            logging.info('Using CUDA, {} devices.'.format(t.cuda.device_count()))  # the number of GPUs
-            if t.cuda.device_count() > 1:
-                model = nn.DataParallel(model) # parallel model computing
-            model = model.to(self.device)
-        return model
-
-    def initoptimizer(self):
         # About momentum:
         # gradient descent: w_{k+1} = w_k - alpha*f'(w_k)
         # with momentum: z_{k+1} = beta*z_k + f'(w_k),
         #                w_{k+1} = w_k - alpha*z_{k+1}
         # control the updating. High momentum, smooth gradient descent.
-        return optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
+        optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+
+        # loading saved model and optimizer
+        if self.checkpoint:
+            logging.info('Loading existing model')
+            model_checkpoint = t.load(self.checkpoint)
+            model.load_state_dict(model_checkpoint['model_state'])
+            optimizer.load_state_dict(model_checkpoint['optimizer_state'])
+            self.loss = model_checkpoint['best_loss']
+            self.epoch_start = model_checkpoint['epoch']
+            self.totalTrainingSamples_count = model_checkpoint['totalTrainingSamples_count']
+
+        if self.use_cuda:
+            logging.info('Using CUDA, {} devices.'.format(t.cuda.device_count()))  # the number of GPUs
+            if t.cuda.device_count() > 1:
+                model = nn.DataParallel(model) # parallel model computing
+            model = model.to(self.device)
+        return model, optimizer
 
     def initTrainloader(self):
         # get training dataset
@@ -287,7 +301,7 @@ class LunaTrainingApp:
         validationloader = self.initValidationloader()
 
         # start iteration for training
-        for epoch in range(1, self.args.epochs+1):
+        for epoch in range(self.epoch_start, self.args.epochs+1):
             logging.info('Epoch {} of {}, {}/{} batches of size {}*{}.'.format(
                 epoch,
                 self.args.epochs,
@@ -297,11 +311,36 @@ class LunaTrainingApp:
                 (t.cuda.device_count() if self.use_cuda else 1)))
 
             TrainMetrics = self.training(trainloader)
+
+            # save training model if the loss is better
+            loss_this_model = TrainMetrics[2].mean()
+            if loss_this_model < self.loss:
+                self.saveModel(epoch=epoch, bestloss=loss_this_model)
+            # log out
             self.logMetrics(epoch, 'Training', TrainMetrics)
             logging.info('Epoch {}, training ends'.format(epoch))
+            # validation
             ValMetrics = self.validation(validationloader)
             self.logMetrics(epoch, 'Validation', ValMetrics)
             logging.info('Epoch{}, validation ends'.format(epoch))
+
+    def saveModel(self, epoch, bestloss):
+        pathModel = '/gscratch/stf/nelljy/savedmodel/{}_{}_{}.state'.format('classification',
+                                                                            time.strftime('%Y-%m-%d_%H_%M_%S', time.localtime()),
+                                                                            self.totalTrainingSamples_count)
+        model = self.model
+        state = {
+            'model_state': model.state_dict(),
+            'model_name': type(model).__name__,
+            'time': time.strftime('%Y/%m/%d %H:%M:%S', time.localtime()),
+            'optimizer_state': self.optimizer.state_dict(),
+            'optimizer_name': type(self.optimizer).__name__,
+            'epoch': epoch,
+            'best_loss': bestloss,
+            'totalTrainingSamples_count': self.totalTrainingSamples_count
+        }
+
+        t.save(state, pathModel)
 
 
 if __name__ == '__main__':

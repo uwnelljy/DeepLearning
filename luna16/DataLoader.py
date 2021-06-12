@@ -43,8 +43,8 @@ class LunaDataset(Dataset):
         # we define the size of the whole dataset in each epoch rather than the true size
         # speed the iteration in each epoch
         # because we have many repeated image (positive ones) after creating balanced data
-        if self.ratio:
-            return 100
+        if self.ratio != 0:
+            return 200000
         else:
             return len(self.CandidateInfo_list)
 
