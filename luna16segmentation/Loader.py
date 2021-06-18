@@ -1,4 +1,4 @@
-from Preprocessing import Candidate, CtLoader
+from Preprocessing import getCandidateInfo, getct
 from torch.utils.data import Dataset
 import torch as t
 import random
@@ -14,13 +14,14 @@ class Luna2dDataset(Dataset):
         :param fullCt_bool: use full CT slides? (all the indexes)
         :param slices_count: a chunk is formed by slices_count slices (indexes)
         """
+        print('load validation dataset')
         self.slices_count = slices_count
 
         # get all the series_uid (raw ct) on the disk
         if series_uid:
             self.series_uid_list = [series_uid]
         else:
-            self.series_uid_list = sorted(Candidate().getCandidateInfo()[1].keys())  # sorted converts dict_keys to list
+            self.series_uid_list = sorted(getCandidateInfo()[1].keys())  # sorted converts dict_keys to list
 
         # get training or validation series_uid on the disk
         if isVal_bool:
@@ -33,17 +34,19 @@ class Luna2dDataset(Dataset):
 
         # get samples from every series_uid
         self.sample_list = []  # (uid, index number) pair
+        print('ctloader for sample_list starts')
         for one_uid in self.series_uid_list:
-            oneloader = CtLoader(one_uid)
+            oneloader = getct(one_uid)
             max_index = oneloader.max_index
             nodule_slice_list = oneloader.Nodule_slice_list
             if fullCt_bool:
                 self.sample_list += [(one_uid, index) for index in range(max_index)]
             else:
                 self.sample_list += [(one_uid, index) for index in nodule_slice_list]
+        print('ctloader for sample_list ends')
 
         series_uid_set = set(self.series_uid_list)
-        self.selected_CandidateInfo_list = [item for item in Candidate().getCandidateInfo()[0]
+        self.selected_CandidateInfo_list = [item for item in getCandidateInfo()[0]
                                             if item.series_uid in series_uid_set]
         self.selected_NoduleInfo_list = [item for item in self.selected_CandidateInfo_list
                                          if item.isNodule_bool]
@@ -57,7 +60,8 @@ class Luna2dDataset(Dataset):
         return self.getSlices(one_uid, slice_index)
 
     def getSlices(self, one_uid, slice_index):  # generate one chunk centered at slice_index
-        oneloader = CtLoader(one_uid)
+        print('ctloader for get slices starts with {}'.format(one_uid))
+        oneloader = getct(one_uid)
         ct_np = oneloader.ct_np
         nodule_mask = oneloader.Nodule_mask
         # the dimension of chunk is 7*512*512 because we treat 7 as channels.
@@ -81,9 +85,10 @@ class Luna2dDataset(Dataset):
 class TrainingLuna2dDataset(Luna2dDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        print('load training dataset')
 
     def __len__(self):
-        return 200000
+        return 50
 
     def __getitem__(self, ndx):
         selected_NoduleInfo_tuple = self.selected_NoduleInfo_list[ndx % len(self.selected_NoduleInfo_list)]
@@ -91,7 +96,8 @@ class TrainingLuna2dDataset(Luna2dDataset):
 
     def getitem_training(self, NoduleInfo_tuple):
         center_xyz = NoduleInfo_tuple.center_xyz
-        loader = CtLoader(NoduleInfo_tuple.series_uid)
+        print('ctloader for getitem_training starts')
+        loader = getct(NoduleInfo_tuple.series_uid)
         # get a 7*96*96 smaller chunk, chunk_mask has the same dimension as chunk
         chunk, chunk_mask, irc_tuple = loader.getChunk(center_xyz, (7, 96, 96))
         # get the center slice of chunk_mask to conform with the validation set
@@ -108,7 +114,3 @@ class TrainingLuna2dDataset(Luna2dDataset):
 
         return chunk_t, chunk_mask_t, NoduleInfo_tuple.series_uid, slice_ndx
 
-
-if __name__ == '__main__':
-    series_uid = '1.3.6.1.4.1.14519.5.2.1.6279.6001.430109407146633213496148200410'
-    print(TrainingLuna2dDataset(series_uid=series_uid))

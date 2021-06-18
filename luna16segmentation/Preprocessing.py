@@ -7,58 +7,60 @@ import SimpleITK as sitk
 import numpy as np
 
 
-class Candidate:
-    def __init__(self):
-        self.CandidateInfo_list, self.CandidateInfo_dict = self.getCandidateInfo()
+@functools.lru_cache(1)
+def getCandidateInfo():
+    print('load candidate')
+    # files that are on the disk
+    mhd_file_name = glob.glob('./data/subset*/*.mhd')
+    presentOnDisk_series_uid_set = {os.path.split(pathname)[1][:-4] for pathname in mhd_file_name}
 
-    @functools.lru_cache(1)
-    def getCandidateInfo(self):
-        # files that are on the disk
-        mhd_file_name = glob.glob('./data/subset*/*.mhd')
-        presentOnDisk_series_uid_set = {os.path.split(pathname)[1][:-4] for pathname in mhd_file_name}
+    CandidateInfo_list = []
+    CandidateInfo_dict = {}
 
-        CandidateInfo_list = []
-        CandidateInfo_dict = {}
+    # get annotations from annotation file which only contains nodule
+    with open('./data/annotations_with_malignancy.csv') as f:
+        for row in list(csv.reader(f))[1:]:
+            series_uid = row[0]
 
-        # get annotations from annotation file which only contains nodule
-        with open('./data/annotations_with_malignancy.csv') as f:
-            for row in list(csv.reader(f))[1:]:
-                series_uid = row[0]
-                center_xyz = tuple([float(coord) for coord in row[1:4]])
-                diameter_mm = float(row[4])
-                isMal_bool = {'False': False, 'True': True}[row[5]]
-                info = CandidateInfo_tuple(
-                    True, True, isMal_bool, diameter_mm, series_uid, center_xyz
-                )
-                CandidateInfo_list.append(info)
-                CandidateInfo_dict.setdefault(series_uid, []).append(info)
+            # check whether on disk
+            if series_uid not in presentOnDisk_series_uid_set:
+                continue
 
-        # get non-nodule candidate information
-        with open('./data/candidates.csv') as f:
-            for row in list(csv.reader(f))[1:]:
-                series_uid = row[0]
-                is_nodule = bool(int(row[4]))
+            center_xyz = tuple([float(coord) for coord in row[1:4]])
+            diameter_mm = float(row[4])
+            isMal_bool = {'False': False, 'True': True}[row[5]]
+            info = CandidateInfo_tuple(
+                True, True, isMal_bool, diameter_mm, series_uid, center_xyz
+            )
+            CandidateInfo_list.append(info)
+            CandidateInfo_dict.setdefault(series_uid, []).append(info)
 
-                # check whether on disk
-                if (series_uid not in presentOnDisk_series_uid_set) or is_nodule:
-                    continue
+    # get non-nodule candidate information
+    with open('./data/candidates.csv') as f:
+        for row in list(csv.reader(f))[1:]:
+            series_uid = row[0]
+            is_nodule = bool(int(row[4]))
 
-                center_xyz = tuple([float(coord) for coord in row[1:4]])
-                info = CandidateInfo_tuple(
-                    False, False, False, 0, series_uid, center_xyz
-                )
-                CandidateInfo_list.append(info)
-                CandidateInfo_dict.setdefault(series_uid, []).append(info)
+            # check whether on disk
+            if (series_uid not in presentOnDisk_series_uid_set) or is_nodule:
+                continue
 
-        # sort by diameter_mm
-        CandidateInfo_list.sort(reverse=True)
+            center_xyz = tuple([float(coord) for coord in row[1:4]])
+            info = CandidateInfo_tuple(
+                False, False, False, 0, series_uid, center_xyz
+            )
+            CandidateInfo_list.append(info)
+            CandidateInfo_dict.setdefault(series_uid, []).append(info)
 
-        return CandidateInfo_list, CandidateInfo_dict
+    # sort by diameter_mm
+    CandidateInfo_list.sort(reverse=True)
+
+    return CandidateInfo_list, CandidateInfo_dict
 
 
 class CtLoader:
-    @functools.lru_cache(1)
     def __init__(self, series_uid):
+        print('load ctloader with {}'.format(series_uid))
         # get ct data
         ct_path = glob.glob('./data/subset*/{}.mhd'.format(series_uid))[0]
         ct_mhd = sitk.ReadImage(ct_path)
@@ -69,10 +71,9 @@ class CtLoader:
         self.direction = np.array(ct_mhd.GetDirection()).reshape(3, 3)
 
         # get nodule information
-        CandidateInfo_dict = Candidate().CandidateInfo_dict
-        CandidateInfo_list = CandidateInfo_dict[series_uid]
+        candidate_with_one_uid_list = getCandidateInfo()[1][self.series_uid]
         self.NoduleInfo_list = [  # this is a list of tuple. [tuple1, tuple2, ...]
-            info for info in CandidateInfo_list
+            info for info in candidate_with_one_uid_list
             if info.isNodule_bool
         ]
         self.Nodule_mask = self.buildAnnotationMask()
@@ -156,5 +157,6 @@ class CtLoader:
         return chunk, chunk_mask, irc_tuple
 
 
-if __name__ == '__main__':
-    print(CtLoader('1.3.6.1.4.1.14519.5.2.1.6279.6001.430109407146633213496148200410').Nodule_slice_list)
+@functools.lru_cache(1)
+def getct(series_uid):
+    return CtLoader(series_uid)
