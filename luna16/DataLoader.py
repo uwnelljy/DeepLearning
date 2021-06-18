@@ -1,4 +1,4 @@
-import Preprocessing
+from Preprocessing import GetCandidateInfo, getct
 from torch.utils.data import Dataset
 import torch as t
 import random
@@ -13,7 +13,7 @@ class LunaDataset(Dataset):
         :param series_uid: series uid
         :param ratio: the proportion of negative and positive cases in training set, i.e. negative/positive
         """
-        self.CandidateInfo_list = Preprocessing.Candidate(True).GetCandidateInfo().copy()
+        self.CandidateInfo_list = GetCandidateInfo().copy()
 
         if series_uid:
             self.CandidateInfo_list = [x for x in self.CandidateInfo_list if x.series_uid == series_uid]
@@ -67,7 +67,7 @@ class LunaDataset(Dataset):
         # get center coordinates
         xyz = candidateTuple.candidateXYZ
         width = [32, 48, 48]
-        raw_ct = Preprocessing.CtLoader(series_uid)
+        raw_ct = getct(series_uid)
 
         # get ct chunk with 1 channel
         if self.augmentation:

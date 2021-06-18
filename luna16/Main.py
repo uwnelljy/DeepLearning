@@ -1,6 +1,5 @@
 import sys
 import time
-
 from Net import LunaModel
 import torch as t
 import torch.nn as nn
@@ -28,6 +27,7 @@ class LunaTrainingApp:
         # see sys_argv_test.py
         if sys_argv is None:
             # sys.argv[1:] is all the variables we input through command line
+            # sys.argv[0] is the name of the script
             sys_argv = sys.argv[1:]  # if we want to use command line to input parameters
 
         parser = argparse.ArgumentParser()
@@ -83,22 +83,30 @@ class LunaTrainingApp:
         if self.args.augmentation or self.args.augmentation_noise:
             self.augmentation['noise'] = 25.0
 
-        self.checkpoint = None
+        self.checkpoint = '/gscratch/stf/nelljy/savedmodel/classification_2021-06-16_23_43_39_2800000.state'
         self.loss = 10000000
         self.epoch_start = 1
         self.use_cuda = t.cuda.is_available()
         self.device = t.device('cuda') if self.use_cuda else t.device('cpu')
-        self.model, self.optimizer = self.initmodel_optimizer()
         self.totalTrainingSamples_count = 0
+        self.model, self.optimizer = self.initmodel_optimizer()
 
     def initmodel_optimizer(self):
         # initialize model and optimizer
         model = LunaModel()
+
+        if self.use_cuda:
+            logging.info('Using CUDA, {} devices.'.format(t.cuda.device_count()))  # the number of GPUs
+            if t.cuda.device_count() > 1:
+                model = nn.DataParallel(model)  # parallel model computing
+            model = model.to(self.device)
+
         # About momentum:
         # gradient descent: w_{k+1} = w_k - alpha*f'(w_k)
         # with momentum: z_{k+1} = beta*z_k + f'(w_k),
         #                w_{k+1} = w_k - alpha*z_{k+1}
         # control the updating. High momentum, smooth gradient descent.
+        # initializing optimizer should be after moving the model to gpu
         optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
         # loading saved model and optimizer
@@ -111,11 +119,6 @@ class LunaTrainingApp:
             self.epoch_start = model_checkpoint['epoch']
             self.totalTrainingSamples_count = model_checkpoint['totalTrainingSamples_count']
 
-        if self.use_cuda:
-            logging.info('Using CUDA, {} devices.'.format(t.cuda.device_count()))  # the number of GPUs
-            if t.cuda.device_count() > 1:
-                model = nn.DataParallel(model) # parallel model computing
-            model = model.to(self.device)
         return model, optimizer
 
     def initTrainloader(self):
@@ -178,6 +181,8 @@ class LunaTrainingApp:
         return trainMetrics_gpu.to('cpu')
 
     def computeBatchLoss(self, ndx, loader, size, metrics):
+
+        # the loader contains the information from __getitem__, each has a size of batch_size
         data, labels, series_uid, xyz = loader
 
         # non_blocking=True: if you try to access data immediately after executing the statement,
