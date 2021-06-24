@@ -34,7 +34,7 @@ def xyz2irc(xyzTuple, origin, spacing, direction):
 
 def diceloss(label, prediction, epsilon=1):
     """
-    :param label: tensor
+    :param label: tensor bool
     :param prediction: tensor
     :param epsilon: if dice_label = 0, dice_prediction = 0, we need epsilon to avoid problems
     :return:

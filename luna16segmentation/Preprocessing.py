@@ -9,7 +9,6 @@ import numpy as np
 
 @functools.lru_cache(1)
 def getCandidateInfo():
-    print('load candidate')
     # files that are on the disk
     mhd_file_name = glob.glob('./data/subset*/*.mhd')
     presentOnDisk_series_uid_set = {os.path.split(pathname)[1][:-4] for pathname in mhd_file_name}
@@ -60,7 +59,6 @@ def getCandidateInfo():
 
 class CtLoader:
     def __init__(self, series_uid):
-        print('load ctloader with {}'.format(series_uid))
         # get ct data
         ct_path = glob.glob('./data/subset*/{}.mhd'.format(series_uid))[0]
         ct_mhd = sitk.ReadImage(ct_path)
@@ -76,13 +74,17 @@ class CtLoader:
             info for info in candidate_with_one_uid_list
             if info.isNodule_bool
         ]
-        self.Nodule_mask = self.buildAnnotationMask()
+        self.Nodule_mask = self.buildAnnotationMask()  # bool
         # get total index of this ct
         self.max_index = int(self.ct_np.shape[0])
         # get slice index with Nodule
         self.Nodule_slice_list = self.Nodule_mask.sum(axis=(1, 2)).nonzero()[0].tolist()
 
     def buildAnnotationMask(self, threshold_hu=-700):
+        """
+        :param threshold_hu:
+        :return: a bool mask
+        """
         mask_box = np.zeros_like(self.ct_np, dtype=bool)
 
         # candidate tuple in nodule list one by one
@@ -125,7 +127,8 @@ class CtLoader:
                 cr - row_radius: cr + row_radius + 1,
                 cc - col_radius: cc + col_radius + 1] = True
 
-        mask = mask_box & (self.ct_np > threshold_hu)
+        mask = mask_box & (self.ct_np > threshold_hu)  # same dimension as ct_np
+        # mask is bool
         return mask
 
     def getChunk(self, center_xyz, width_irc):
@@ -152,7 +155,8 @@ class CtLoader:
 
         chunk = self.ct_np[tuple(slice_list)]
         chunk.clip(min=-1000, max=1000, out=chunk)
-        chunk_mask = self.Nodule_mask[tuple(slice_list)]
+        chunk_mask = self.Nodule_mask[tuple(slice_list)]  # same dimension as chunk
+        # chunk_mask is bool
 
         return chunk, chunk_mask, irc_tuple
 
