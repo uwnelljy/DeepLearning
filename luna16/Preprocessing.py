@@ -187,6 +187,7 @@ class CtLoader:
 
         return augmented_chunk, irc
 
+
 @lru_cache(1, typed=True)
 def getct(series_uid):
     return CtLoader(series_uid)
