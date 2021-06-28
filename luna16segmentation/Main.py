@@ -337,7 +337,7 @@ class SegmentationTrainingApp:
             'optimizer_name': type(self.optimizer).__name__,
             'epoch': epoch,
             'best_loss': bestloss,
-            'totalTrainingSamples_count': self.totalTrainingCount
+            'totalTrainingCount': self.totalTrainingCount
         }
 
         t.save(state, pathModel)

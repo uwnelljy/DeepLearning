@@ -83,7 +83,7 @@ class TrainingLuna2dDataset(Luna2dDataset):
         super().__init__(*args, **kwargs)
 
     def __len__(self):
-        return 300000
+        return 50
 
     def shuffle(self):
         # why shuffle here?
