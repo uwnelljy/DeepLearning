@@ -1,11 +1,6 @@
 import sys
-from Net import LunaModel
-import torch as t
-import torch.nn as nn
-import numpy as np
 import logging
-import torch.optim as optim
-from DataLoader import LunaDataset
+from Dataloader import LunaDataset
 from torch.utils.data import DataLoader
 import argparse
 

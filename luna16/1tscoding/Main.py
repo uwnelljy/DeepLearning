@@ -1,18 +1,17 @@
 import sys
 import time
-import Net
+from Net import LunaModel
 import torch as t
 import torch.nn as nn
 import numpy as np
 import logging
 import torch.optim as optim
-import Dataloader
+from DataLoader import LunaDataset, MalignantLunaDataset
 from torch.utils.data import DataLoader
 import argparse
 import warnings
-import os
-from torch.utils.tensorboard import SummaryWriter
 
+STRIDE = 10
 
 logging.basicConfig(filename='luna16cla.log',
                     format='[%(asctime)s-%(filename)s-%(levelname)s:%(message)s]',
@@ -41,6 +40,10 @@ class LunaTrainingApp:
         parser.add_argument('--epochs',
                             help='Maximun iterations for training the model',
                             default=1, type=int)
+        parser.add_argument('--balanced',
+                            help='Create balanced data with half positive cases and half negative cases',
+                            action='store_true',  # if we use --balanced, then it will be True, ow it will be False
+                            default=False)
         parser.add_argument('--augmentation',
                             help='Creare augmented data using flip, rotate, offset, scale and noise',
                             action='store_true',
@@ -78,13 +81,8 @@ class LunaTrainingApp:
                             action='store_true',
                             default=False)
         parser.add_argument('--tb-prefix',
-                            default='luna16cla',
+                            default='luna16seg',
                             help='Prefix for tensorboard run.')
-
-        self.args = parser.parse_args(sys_argv)
-        self.training_writer = None
-        self.validation_writer = None
-        self.time = time.strftime('%Y-%m-%d_%H_%M_%S', time.localtime())
 
         # we use argument variables from command line
         self.args = parser.parse_args(sys_argv)
@@ -100,19 +98,17 @@ class LunaTrainingApp:
         if self.args.augmentation or self.args.augmentation_noise:
             self.augmentation['noise'] = 25.0
 
-        self.checkpoint = None
+        self.checkpoint = '/gscratch/stf/nelljy/savedmodel/classification_2021-06-16_23_43_39_2800000.state'
         self.loss = 10000000
         self.epoch_start = 1
         self.use_cuda = t.cuda.is_available()
         self.device = t.device('cuda') if self.use_cuda else t.device('cpu')
         self.totalTrainingSamples_count = 0
-        self.model, self.optimizer, self.augmodel = self.initmodel_optimizer()
+        self.model, self.optimizer = self.initmodel_optimizer()
 
     def initmodel_optimizer(self):
         # initialize model and optimizer
-        model_define = getattr(Net, self.args.model)
-        model = model_define()
-        augmodel = Net.Augmentation(**self.augmentation)
+        model = LunaModel()
 
         if self.use_cuda:
             logging.info('Using CUDA, {} devices.'.format(t.cuda.device_count()))  # the number of GPUs
@@ -126,38 +122,45 @@ class LunaTrainingApp:
         #                w_{k+1} = w_k - alpha*z_{k+1}
         # control the updating. High momentum, smooth gradient descent.
         # initializing optimizer should be after moving the model to gpu
-        optimizer = optim.Adam(model.parameters(), lr=3e-4)
+        optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
         # loading saved model and optimizer
         if self.checkpoint:
-            logging.info('Loading existing model: {}'.format(self.checkpoint))
+            logging.info('Loading existing model')
             model_checkpoint = t.load(self.checkpoint)
             model.load_state_dict(model_checkpoint['model_state'])
             optimizer.load_state_dict(model_checkpoint['optimizer_state'])
             self.loss = model_checkpoint['best_loss']
-            self.epoch_start = model_checkpoint['epoch'] + 1
+            self.epoch_start = model_checkpoint['epoch']
             self.totalTrainingSamples_count = model_checkpoint['totalTrainingSamples_count']
 
-        return model, optimizer, augmodel
+        return model, optimizer
 
     def initTrainloader(self):
-        # get training dataset, classification of nodules or malignant nodules
-        dataset_define = getattr(Dataloader, self.args.dataset)
-        training_dataset = dataset_define(stride=10,
-                                          isVal_bool=False,
-                                          ratio=1)
-        logging.info(('Dataset: {}, {} positive samples, {} negative samples, ' +
-                     '{} benign samples, {} malignant samples').format(
-            self.args.dataset,
+        # get training dataset
+        training_dataset = LunaDataset(stride=STRIDE,
+                                       isVal_bool=False,
+                                       ratio=int(self.args.balanced),
+                                       augmentation=self.augmentation)  # int(True) = 1, int(False) = 0
+        logging.info('Balanced: {}, ratio: {}, {} positive samples, {} negative samples'.format(
+            self.args.balanced,
+            training_dataset.ratio,
             len(training_dataset.positive_list),
-            len(training_dataset.negative_list),
-            len(training_dataset.benign_list),
-            len(training_dataset.malignancy_list)))
+            len(training_dataset.negative_list)))
         # read batch_size from command line
         batch_size = self.args.batch_size
         if self.use_cuda:
             batch_size *= t.cuda.device_count()  # why????????
 
+        # pinned memory transfers to GPU quickly
+        # num_workers: provide parallel loading of data by using separate processes and shared memory
+        # each worker process produces complete batches
+        # this helps make sure hungry GPUs are well fed with data
+        # num_workers: worker将它负责的batch加载进RAM，dataloader就可以直接从RAM中找本轮迭代要用的batch。
+        # 如果num_worker设置得大，好处是寻batch速度快，因为下一轮迭代的batch很可能在上一轮/上上一轮...迭代时已经加载好了。
+        # 坏处是内存开销大，也加重了CPU负担（worker加载数据到RAM的进程是进行CPU复制）。
+        # 如果num_worker设为0，意味着每一轮迭代时，dataloader不再有自主加载数据到RAM这一步骤，
+        # 只有当你需要的时候再加载相应的batch，当然速度就更慢。
         trainloader = DataLoader(training_dataset, batch_size=batch_size,
                                  num_workers=self.args.num_workers, pin_memory=self.use_cuda)
         # the length of trainloader is the number of batches
@@ -165,20 +168,13 @@ class LunaTrainingApp:
         return trainloader
 
     def initValidationloader(self):
-        dataset_define = getattr(Dataloader, self.args.dataset)
-        validation_dataset = dataset_define(stride=10, isVal_bool=True)
+        validation_dataset = LunaDataset(stride=STRIDE, isVal_bool=True)
         batch_size = self.args.batch_size
         if self.use_cuda:
             batch_size *= t.cuda.device_count()
         validationloader = DataLoader(validation_dataset, batch_size=batch_size,
                                       num_workers=self.args.num_workers, pin_memory=self.use_cuda)
         return validationloader
-
-    def initTensorboardWriters(self):
-        if self.training_writer is None:
-            log_dir = os.path.join('runs', self.args.tb_prefix, self.time)
-            self.training_writer = SummaryWriter(log_dir=log_dir + '_train_seg_')
-            self.validation_writer = SummaryWriter(log_dir=log_dir + '_val_seg_')
 
     def training(self, trainloader):
         # set model to training mode, but the model is still self.model
@@ -202,7 +198,7 @@ class LunaTrainingApp:
     def computeBatchLoss(self, ndx, loader, size, metrics):
 
         # the loader contains the information from __getitem__, each has a size of batch_size
-        data, labels, index_t, series_uid, xyz = loader
+        data, labels, series_uid, xyz = loader
 
         # non_blocking=True: if you try to access data immediately after executing the statement,
         # it may still be on the CPU. If you need to use the data in the very next statement,
@@ -214,10 +210,6 @@ class LunaTrainingApp:
         # but here it raises an error so I remove it
         data_gpu = data.to(self.device)
         labels_gpu = labels.to(self.device)
-        index_gpu = index_t.to(self.device)
-
-        if self.augmentation:
-            data_gpu = self.augmodel(data_gpu)
         # the output is designed in Net. The first is the result before softmax
         logits_gpu, probability_gpu = self.model(data_gpu)
 
@@ -233,9 +225,9 @@ class LunaTrainingApp:
         start = ndx * size
         end = start + labels.size(0)
 
-        metrics[0, start:end] = index_gpu
-        metrics[1, start:end] = probability_gpu[:, 1]
-        metrics[2, start:end] = loss_gpu
+        metrics[0, start:end] = labels_gpu[:, 1].detach() # we use detach since no need to hold on to gradients
+        metrics[1, start:end] = probability_gpu[:, 1].detach()
+        metrics[2, start:end] = loss_gpu.detach()
         return loss_gpu.mean()
 
     def validation(self, validationloader):
@@ -265,8 +257,8 @@ class LunaTrainingApp:
         neg_pre_mask = ~pos_pre_mask
 
         # compute count
-        pos_count = int(pos_label_mask.sum()) or 1
-        neg_count = int(neg_label_mask.sum()) or 1
+        pos_count = int(pos_label_mask.sum())
+        neg_count = int(neg_label_mask.sum())
 
         # compute correct classifications
         pos_correct = int((pos_label_mask & pos_pre_mask).sum())
@@ -320,15 +312,6 @@ class LunaTrainingApp:
                       'Recall is {recall:.4f}, ' +
                       'F1 score is {f1:.4f}').format(**metrics_dict))
 
-        self.initTensorboardWriters()
-        writer = getattr(self, mode + '_writer')
-
-        for key, value in metrics_dict.items():
-            # 1 element: name, 2 element: y, 3 element: x
-            writer.add_scalar('seg_' + key, value, self.totalTrainingSamples_count)
-
-        writer.flush()  # ensure all pending events have been written to disk
-
     def main(self):
         # start
         logging.info('Starting {}, {}'.format(type(self).__name__, self.args))
@@ -354,18 +337,17 @@ class LunaTrainingApp:
             if loss_this_model < self.loss:
                 self.saveModel(epoch=epoch, bestloss=loss_this_model)
             # log out
-            self.logMetrics(epoch, 'training', TrainMetrics)
+            self.logMetrics(epoch, 'Training', TrainMetrics)
             logging.info('Epoch {}, training ends'.format(epoch))
             # validation
             ValMetrics = self.validation(validationloader)
-            self.logMetrics(epoch, 'validation', ValMetrics)
+            self.logMetrics(epoch, 'Validation', ValMetrics)
             logging.info('Epoch{}, validation ends'.format(epoch))
 
     def saveModel(self, epoch, bestloss):
-        # /gscratch/stf/nelljy
-        pathModel = './savedmodel/{}_{}_{}.state'.format(self.args.dataset,
-                                                         self.time,
-                                                         self.totalTrainingSamples_count)
+        pathModel = '/gscratch/stf/nelljy/savedmodel/{}_{}_{}.state'.format('classification',
+                                                                            time.strftime('%Y-%m-%d_%H_%M_%S', time.localtime()),
+                                                                            self.totalTrainingSamples_count)
         model = self.model
         state = {
             'model_state': model.state_dict(),
