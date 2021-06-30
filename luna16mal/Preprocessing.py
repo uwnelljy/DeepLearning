@@ -1,8 +1,60 @@
 import glob
 import SimpleITK as sitk
 import numpy as np
-from Helper import xyz2irc
+from Helper import xyz2irc, CandidateInfo_tuple
 import functools
+import os
+import csv
+
+
+@functools.lru_cache(1)
+def getCandidateInfo(path):
+    # files that are on the disk
+    mhd_file_name = glob.glob('{}/*.mhd'.format(path))
+    presentOnDisk_series_uid_set = {os.path.split(pathname)[1][:-4] for pathname in mhd_file_name}
+
+    CandidateInfo_list = []
+    CandidateInfo_dict = {}
+
+    # get annotations from annotation file which only contains nodule
+    with open('./data/annotations_with_malignancy.csv') as f:
+        for row in list(csv.reader(f))[1:]:
+            series_uid = row[0]
+
+            # check whether on disk
+            if series_uid not in presentOnDisk_series_uid_set:
+                continue
+
+            center_xyz = tuple([float(coord) for coord in row[1:4]])
+            diameter_mm = float(row[4])
+            isMal_bool = {'False': False, 'True': True}[row[5]]
+            info = CandidateInfo_tuple(
+                True, True, isMal_bool, diameter_mm, series_uid, center_xyz
+            )
+            CandidateInfo_list.append(info)
+            CandidateInfo_dict.setdefault(series_uid, []).append(info)
+
+    # get non-nodule candidate information
+    with open('./data/candidates.csv') as f:
+        for row in list(csv.reader(f))[1:]:
+            series_uid = row[0]
+            is_nodule = bool(int(row[4]))
+
+            # check whether on disk
+            if (series_uid not in presentOnDisk_series_uid_set) or is_nodule:
+                continue
+
+            center_xyz = tuple([float(coord) for coord in row[1:4]])
+            info = CandidateInfo_tuple(
+                False, False, False, 0, series_uid, center_xyz
+            )
+            CandidateInfo_list.append(info)
+            CandidateInfo_dict.setdefault(series_uid, []).append(info)
+
+    # sort by diameter_mm
+    CandidateInfo_list.sort(reverse=True)
+
+    return presentOnDisk_series_uid_set, CandidateInfo_list, CandidateInfo_dict
 
 
 class CtLoader:

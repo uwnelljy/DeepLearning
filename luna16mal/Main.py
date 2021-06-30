@@ -1,17 +1,48 @@
+import sys
+import argparse
 import torch as t
 import numpy as np
 from torch.utils.data import DataLoader
-from Loader import Luna2dSegDataset
+from Loader import Luna2dSegDataset, LunaDataset
 from scipy.ndimage import measurements
 from Helper import irc2xyz, CandidateInfo_tuple, classificationTuple
+from Model import UNetSeg, LunaModel
+from Preprocessing import getCandidateInfo, getct
+
+
+def match_and_score(detections_list, true_list, threshold_nodule=0.5, threshold_mal=0.5):
+    true_nodules_list = [item for item in true_list if item.isNodule_bool]
+    true_diameter_list = [item.diameter_mm for item in true_nodules_list]
+    true_center_xyz_list = [item.center_xyz for item in true_nodules_list]
+    detected_center_xyz_list = [item.center_xyz for item in detections_list]
+    detected_prob_nodule = [item.prob_nodule for item in detections_list]
+    detected_prob_mal = [item.prob_mal for item in detections_list]
+    
 
 
 class MalOrNot:
-    def __init__(self):
+    def __init__(self, sys_args=None):
+        if sys_args is None:
+            sys_args = sys.argv[1:]
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--num-workers',
+                            help='Number of worker processes for background data loading',
+                            default=0, type=int)
+        parser.add_argument('--batch-size',
+                            help='Number of samples of each batch',
+                            default=32, type=int)
+        parser.add_argument('--epochs',
+                            help='Maximun iterations for training the model',
+                            default=1, type=int)
+        self.args = parser.parse_args(sys_args)
+
         self.use_cuda = t.cuda.is_available()
         self.device = t.device('cuda') if self.use_cuda else t.device('cpu')
 
         # Load trained models
+        self.savedsegmodelpath = None
+        self.savedclamodelpath = None
+        self.savedmalmodelpath = None
         self.segmodel, self.classmodel, self.malmodel = self.loadmodels()
 
     def initsegloader(self, series_uid):
@@ -23,10 +54,44 @@ class MalOrNot:
         return seg_loader
 
     def initclaloader(self, candidate_info_list):
-        pass
+        dataset = LunaDataset(candidate_info_list)
+        cla_loader = DataLoader(dataset,
+                                batch_size=self.args.batch_size,
+                                num_workers=self.args.num_workers,
+                                pin_memory=self.use_cuda)
+        return cla_loader
 
     def loadmodels(self):
-        pass
+        segmodel = UNetSeg(in_channels=7, n_classes=1,
+                           depth=5, wf=6, padding=True,
+                           batch_norm=True, up_mode='upconv')
+        clamodel = LunaModel()
+
+        assert self.savedsegmodelpath, 'a path of segmentation model should be given'
+        assert self.savedclamodelpath, 'a path of classification model should be given'
+
+        segmodeldict = t.load(self.savedsegmodelpath)
+        segmodel.load_state_dict(segmodeldict['model_state'])
+        segmodel.eval()
+
+        clamodeldict = t.load(self.savedclamodelpath)
+        clamodel.load_state_dict(clamodeldict['model_state'])
+        clamodel.eval()
+
+        if self.use_cuda:
+            segmodel.to(self.device)
+            clamodel.to(self.device)
+
+        if self.savedmalmodelpath:
+            malmodel = LunaModel()
+            malmodeldict = t.load(self.savedmalmodelpath)
+            malmodel.load_state_dict(malmodeldict['model_state'])
+            malmodel.eval()
+            if self.use_cuda:
+                malmodel.to(self.device)
+        else:
+            malmodel = None
+        return segmodel, clamodel, malmodel
 
     def segmentation(self, ct_np, series_uid):
         # we need to get one DataLoader which is fed into the segmentation model for consistency and convenience
@@ -85,10 +150,14 @@ class MalOrNot:
 
     # The big picture
     def main(self):
-        for series_uid in series_uid_list:
+        path = './data/subset9'
+        series_uid_set, candidateinfo_list, candidateinfo_dict = getCandidateInfo(path)
+        for series_uid in series_uid_set:
             ct = getct(series_uid)  # 148*512*512
+            trueCandidateinfo_tuple_list = candidateinfo_dict[series_uid]
             segmask_output_np = self.segmentation(ct.ct_np, series_uid)  # 148*512*512
             nodule_list = self.groupsegmentation(series_uid, segmask_output_np, ct.ct_np)  # output should be a list of: (id, irc_center...)
-            classification_list = self.classification(nodule_list)
+            classification_list = self.classification(nodule_list, ct)
             for classification_tuple in classification_list:
                 prob_nodule, prob_mal, center_xyz, center_irc = classification_tuple
+

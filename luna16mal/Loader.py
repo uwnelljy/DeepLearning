@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 import torch as t
+from Preprocessing import getct
 
 
 # this class is used for creating dataset of one CT
@@ -55,7 +56,7 @@ class LunaDataset(Dataset):
         width = [32, 48, 48]
 
         ct = getct(candidateTuple.series_uid)
-        ct_chunk_t, irc = ct.getChunkCandidate(candidateTuple.center_xyz, width)
+        ct_chunk_t, irc = ct.getChunk(candidateTuple.center_xyz, width)
         ct_chunk_t = ct_chunk_t.to(dtype=t.float32)
 
         # convert label to tensor with one hot-encoding
